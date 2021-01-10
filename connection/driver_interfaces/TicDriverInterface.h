@@ -29,6 +29,7 @@ public:
 
 	virtual bool energize() = 0;
 	virtual bool deenergize() = 0;
+	virtual bool isEnergized() = 0;
 
 	virtual bool exitSafeStart() = 0;
 	virtual bool haltAndHold() = 0;

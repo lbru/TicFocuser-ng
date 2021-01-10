@@ -36,6 +36,7 @@ class TicFocuser : public INDI::Focuser
         bool ISNewNumber (const char *dev, const char *name, double values[], char *names[], int n);
         bool ISNewSwitch (const char *dev, const char *name, ISState *states, char *names[], int n);
 
+        virtual bool loadConfig(bool silent = false, const char *property = nullptr) override;
         bool saveConfigItems(FILE *fp);
 
         bool Disconnect();
@@ -49,8 +50,8 @@ class TicFocuser : public INDI::Focuser
 
         void TimerHit();
 
-        bool energizeFocuser();
-        bool deenergizeFocuser();
+        bool energizeFocuser(bool logMessage = true);
+        bool deenergizeFocuser(bool logMessage = true);
     
     protected:
         virtual bool SetFocuserBacklash(int32_t steps) override;
@@ -60,6 +61,11 @@ class TicFocuser : public INDI::Focuser
         bool lastTimerHitError;      //< used to not flood user with the same error messge if it repeats
         int32_t moveRelInitialValue; //< used to simulate MoveRelFocuser
         FocusDirection lastFocusDir; //< used to identify direction reversal (for backlash)
+        bool idlePowerDown;          //< whether to power down while idling
+
+
+        ISwitch IdlePowerS[2];
+        ISwitchVectorProperty IdlePowerSP;
 
         ISwitch FocusParkingModeS[2];
         ISwitchVectorProperty FocusParkingModeSP;

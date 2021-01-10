@@ -48,6 +48,12 @@ bool PololuUsbInterface::deenergize()
 
 }
 
+bool PololuUsbInterface::isEnergized()
+{
+    tic_variables* variables = NULL;
+    return tic_variables_get_energized(variables);
+}
+
 bool PololuUsbInterface::exitSafeStart()
 {
     tic_error* err = tic_exit_safe_start(handle);

@@ -38,6 +38,7 @@ public:
 
 	bool energize();
 	bool deenergize();
+	bool isEnergized();
 
 	bool exitSafeStart();
 	bool haltAndHold();

@@ -49,6 +49,11 @@ bool TiclibInterface::deenergize()
     return true;
 }
 
+bool TiclibInterface::isEnergized()
+{
+    return ticBase.getEnergized();
+}
+
 bool TiclibInterface::exitSafeStart()
 {
     ticBase.exitSafeStart();

@@ -111,6 +111,10 @@ bool TicFocuser::initProperties()
     IUFillSwitch(&FocusParkingModeS[1],"FOCUS_PARKOFF","Disable",ISS_ON);
     IUFillSwitchVector(&FocusParkingModeSP,FocusParkingModeS,2,getDeviceName(),"FOCUS_PARK_MODE","Parking Mode",OPTIONS_TAB,IP_RW,ISR_1OFMANY,60,IPS_IDLE);
 
+    IUFillSwitch(&IdlePowerS[0],"IDLE_POWER_ON", "On", ISS_ON);
+    IUFillSwitch(&IdlePowerS[1],"IDLE_POWER_OFF", "Off", ISS_OFF);
+    IUFillSwitchVector(&IdlePowerSP, IdlePowerS, 2, getDeviceName(), "IDLE_POWER", "Idle power", MAIN_CONTROL_TAB, IP_RW, ISR_1OFMANY, 60, IPS_IDLE);
+
     IUFillSwitch(&EnergizeFocuserS[0],"ENERGIZE_FOCUSER","Energize focuser",ISS_OFF);
     IUFillSwitch(&EnergizeFocuserS[1],"DEENERGIZE_FOCUSER","De-energize focuser",ISS_OFF);
     IUFillSwitchVector(&EnergizeFocuserSP,EnergizeFocuserS,2,getDeviceName(),"ENERGIZE_FOCUSER","Energize",MAIN_CONTROL_TAB,IP_RW,ISR_1OFMANY,60,IPS_IDLE);
@@ -143,12 +147,28 @@ bool TicFocuser::initProperties()
     return true;
 }
 
+bool TicFocuser::loadConfig(bool silent, const char *property)
+{
+    INDI::DefaultDevice::loadConfig(silent, property);
+
+    // I cannot figure out for the life of me how INDI's loadConfig and ISNewSwitch
+    // interact. The loaded config is not used when calling ISNewSwitch?
+
+    idlePowerDown = IUFindOnSwitchIndex(&IdlePowerSP) == 1;
+
+    if(idlePowerDown)
+        deenergizeFocuser();
+
+    return true;
+}
+
 bool TicFocuser::updateProperties()
 {
     INDI::Focuser::updateProperties();
 
     if (isConnected())
     {
+        defineSwitch(&IdlePowerSP);
         defineSwitch(&EnergizeFocuserSP);
         defineSwitch(&FocusParkingModeSP);
         defineText(&InfoSP);
@@ -156,6 +176,7 @@ bool TicFocuser::updateProperties()
     }
     else
     {
+        deleteProperty(IdlePowerSP.name);
         deleteProperty(FocusParkingModeSP.name);
         deleteProperty(EnergizeFocuserSP.name);
         deleteProperty(InfoSP.name);
@@ -184,11 +205,29 @@ bool TicFocuser::ISNewSwitch(const char *dev, const char *name, ISState *states,
             return true;
         }
 
+        // handle idle power
+        if(!strcmp(name, IdlePowerSP.name))
+        {
+            IUUpdateSwitch(&IdlePowerSP, states, names, n);
+            auto newState = strcmp(names[0], IdlePowerS[0].name);
+            IDSetSwitch(&IdlePowerSP, NULL);
+
+            if(newState != idlePowerDown && FocusAbsPosNP.s == IPS_OK)
+                newState ? deenergizeFocuser() : energizeFocuser();
+                
+            idlePowerDown = newState;
+
+            IdlePowerSP.s = IPS_OK;
+
+            return true;
+        }
+
+        // handle power state
         if(!strcmp(name, EnergizeFocuserSP.name))
         {
             bool res;
 
-            if (!strcmp(names[0],EnergizeFocuserS[0].name))
+            if (!strcmp(names[0], EnergizeFocuserS[0].name))
                 res = energizeFocuser();
             else
                 res = deenergizeFocuser();
@@ -209,6 +248,7 @@ bool TicFocuser::saveConfigItems(FILE *fp)
     if (!Focuser::saveConfigItems(fp))
         return false;
 
+    IUSaveConfigSwitch(fp, &IdlePowerSP);
     IUSaveConfigSwitch(fp, &FocusParkingModeSP);
 
     return true;
@@ -219,9 +259,16 @@ bool TicFocuser::Disconnect()
     // park focuser
     if (FocusParkingModeS[0].s != ISS_ON) {
         LOG_INFO("Parking mode disabled, parking not performed.");
+        return Focuser::Disconnect();
     }
     else {
-        MoveAbsFocuser(0);
+        FocusAbsPosNP.s = MoveAbsFocuser(0);
+        
+        while (FocusAbsPosNP.s != IPS_OK)
+        {
+            sleep(1);
+            TimerHit();
+        }
     }
 
     return Focuser::Disconnect();
@@ -229,13 +276,7 @@ bool TicFocuser::Disconnect()
 
 bool TicFocuser::Connect() 
 {
-    bool res = Focuser::Connect();
-
-    if (res) {
-        energizeFocuser();  // Error will be shown by energizeFocuser() function, no need to show it here
-    }
-
-    return res;
+    return Focuser::Connect();
 }
 
 void TicFocuser::TimerHit() 
@@ -266,6 +307,9 @@ void TicFocuser::TimerHit()
                 FocusAbsPosNP.s = IPS_OK;
                 FocusRelPosNP.s = IPS_OK;
                 moveRelInitialValue = -1;
+
+                if(idlePowerDown)
+                    deenergizeFocuser(false);
             }
         }
 
@@ -307,7 +351,7 @@ void TicFocuser::TimerHit()
     SetTimer(POLLMS);
 }
 
-bool TicFocuser::energizeFocuser()
+bool TicFocuser::energizeFocuser(bool logMessage)
 {
     TicConnectionInterface* conn = dynamic_cast<TicConnectionInterface*>(getActiveConnection());    
     TicDriverInterface& driverInterface = conn->getTicDriverInterface();
@@ -317,7 +361,10 @@ bool TicFocuser::energizeFocuser()
         LOGF_ERROR("Cannot energize motor. Error: %s", driverInterface.getLastErrorMsg());
         return false;
     }
-
+    else if (logMessage)
+    {
+        LOG_INFO("Focuser energized.");
+    }
 
     if (!driverInterface.exitSafeStart())
     {
@@ -328,7 +375,7 @@ bool TicFocuser::energizeFocuser()
     return true;
 }
 
-bool TicFocuser::deenergizeFocuser()
+bool TicFocuser::deenergizeFocuser(bool logMessage)
 {
     TicConnectionInterface* conn = dynamic_cast<TicConnectionInterface*>(getActiveConnection());    
     TicDriverInterface& driverInterface = conn->getTicDriverInterface();
@@ -338,9 +385,9 @@ bool TicFocuser::deenergizeFocuser()
         LOGF_ERROR("Cannot de-energize motor. Error: %s", driverInterface.getLastErrorMsg());
         return false;
     }
-    else
+    else if (logMessage)
     {
-        LOG_INFO("Focuser de-energized. You must energize it to resume normal operation.");
+        LOG_INFO("Focuser de-energized.");
     }
 
     return true;
@@ -359,7 +406,6 @@ bool TicFocuser::SyncFocuser(uint32_t ticks)
 
     return true;
 }
-
 
 bool TicFocuser::AbortFocuser() 
 {
@@ -440,6 +486,11 @@ IPState TicFocuser::MoveAbsFocuser(uint32_t ticks)
 
     TicConnectionInterface* conn = dynamic_cast<TicConnectionInterface*>(getActiveConnection());    
     TicDriverInterface& driverInterface = conn->getTicDriverInterface();
+
+    if(!driverInterface.isEnergized())
+    {
+        energizeFocuser(!idlePowerDown);
+    }
 
     if (!driverInterface.setTargetPosition(ticks))
     {
